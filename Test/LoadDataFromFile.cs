@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Test
 {
-    public class LoadDataFromFile
+    public class LoadDataFromFile 
     {
         public List<Transaction> LoadData(string fileName)       
         {

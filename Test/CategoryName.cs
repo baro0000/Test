@@ -20,4 +20,4 @@
     Rata,
     Telefon,
     Abonamenty_inne
-}
+} 

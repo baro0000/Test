@@ -62,4 +62,4 @@ namespace Test
             Console.WriteLine("Aktualizacja budżetu zakończona.");
         }
     }
-}
+} 
