@@ -1,0 +1,23 @@
+﻿public enum CategoryName
+{
+    Bartek,
+    Gosia,
+    INNE,
+    Dom,
+    Miasto,
+    Auta,
+    Medycyna,
+    Odzież,
+    INNE_WYDATKI,
+    Czynsz,
+    Gaz,
+    Prąd,
+    Woda,
+    Play,
+    Przedszkole,
+    Koń,
+    Ubezp_Gosia,
+    Rata,
+    Telefon,
+    Abonamenty_inne
+}
