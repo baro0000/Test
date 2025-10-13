@@ -40,6 +40,32 @@ namespace Test
             LoadLastTransaction();
         }
 
+        private void EnsureEpplusLicenseSet()
+        {
+            try
+            {
+                // Ustawienie licencji — tutaj używamy non-commercial personal z nazwą użytkownika systemowego.
+                // Zmodyfikuj, jeśli chcesz inny tryb (organizacja lub licencja komercyjna).
+                var user = Environment.UserName;
+                if (string.IsNullOrWhiteSpace(user))
+                    user = "NonCommercialUser";
+
+                // Wywołanie na statycznej właściwości License (EPPlus 8+)
+                ExcelPackage.License.SetNonCommercialPersonal(user);
+
+                // Alternatywnie (jeśli chcesz organizację):
+                // ExcelPackage.License.SetNonCommercialOrganization("MojaOrganizacja");
+
+                // Jeśli masz klucz komercyjny:
+                // ExcelPackage.License.SetCommercial("<your-license-key>");
+            }
+            catch (Exception ex)
+            {
+                // Jeżeli ustawienie licencji się nie uda, wypisz ostrzeżenie - ale nadal próbujemy działać.
+                Console.WriteLine($"Uwaga: problem z ustawieniem licencji EPPlus: {ex.Message}");
+            }
+        }
+
         private void Log(string message)
         {
             string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
@@ -71,7 +97,7 @@ namespace Test
 
         public void UpdateBudget(List<Transaction> transactions)
         {
-            OfficeOpenXml.ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
+            EnsureEpplusLicenseSet();
 
             if (!File.Exists(_budgetPath))
                 throw new FileNotFoundException("Nie znaleziono pliku budżetu.", _budgetPath);
