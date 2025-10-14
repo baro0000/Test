@@ -122,7 +122,7 @@ namespace Test
                         continue;
                     }
 
-                    // ustalenie kwoty i typu
+                    // ustalenie kwoty i typu ******************* Po co skoro już jest ustalona *************************\/
                     double amount = 0;
                     string tipo = "";
                     if (t.Uznania > 0 && Math.Abs(t.Obciazenia) < 0.0001)
@@ -148,7 +148,8 @@ namespace Test
                         Log($"Brak kategorii dla transakcji: {t.DataTransakcji} | {t.Odbiorca}");
                         continue;
                     }
-
+                    //********************************************************************************************/\
+                  
                     bool written = false;
 
                     // PRZYCHODY i KOSZTY STAŁE -> wpis obok nazwy kategorii (po prawej stronie scalonego zakresu)

@@ -10,8 +10,7 @@ namespace Test
         public string ZNumeruKonta;
         public string Odbiorca;
         public string Opis;
-        public double Obciazenia;
-        public double Uznania;
+        public double Kwota;
         public double Saldo;
         public string Waluta = "PLN";
         public Category? Kategoria = null;
@@ -29,8 +28,18 @@ namespace Test
             ZNumeruKonta = zNumeruKonta;
             Odbiorca = odbiorca;
             Opis = opis;
-            Obciazenia = obciazenia;
-            Uznania = uznania;
+            if (obciazenia < 0)
+            {
+                Kwota = obciazenia;
+            }
+            else if (uznania > 0)
+            {
+                Kwota = uznania;
+            }
+            else
+            {
+                Console.WriteLine("Błąd Przypisania kwoty");
+            }
             Saldo = saldo;
         }
 
@@ -43,8 +52,7 @@ namespace Test
             Console.WriteLine("Z numeru konta: " + ZNumeruKonta);
             Console.WriteLine("Odbiorca: " + Odbiorca);
             Console.WriteLine("Opis: " + Opis);
-            Console.WriteLine("Obciazenia: " + Obciazenia);
-            Console.WriteLine("Uznania: " + Uznania);
+            Console.WriteLine("Kwota: " + Kwota);
             Console.WriteLine("Saldo: " + Saldo);
             Console.WriteLine("Waluta: " + Waluta);
         }
