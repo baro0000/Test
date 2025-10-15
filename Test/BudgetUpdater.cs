@@ -122,25 +122,8 @@ namespace Test
                         continue;
                     }
 
-                    // ustalenie kwoty i typu ******************* Po co skoro już jest ustalona *************************\/
-                    double amount = 0;
-                    string tipo = "";
-                    if (t.Uznania > 0 && Math.Abs(t.Obciazenia) < 0.0001)
-                    {
-                        amount = t.Uznania;
-                        tipo = "Uznanie";
-                    }
-                    else if (t.Obciazenia < 0 && Math.Abs(t.Uznania) < 0.0001)
-                    {
-                        amount = Math.Abs(t.Obciazenia);
-                        tipo = "Obciążenie";
-                    }
-                    else
-                    {
-                        // obie wartości puste/niejednoznaczne -> pomijamy (można tu dodać heurystykę)
-                        Log($"Nieokreślony typ transakcji (Uznania/Obciazenia) dla: {t.DataTransakcji} | {t.Odbiorca}");
-                        continue;
-                    }
+                    double amount = Math.Abs(t.Kwota);
+                    string tipo = t.Kategoria?.Type ?? (t.Kwota >= 0 ? "Uznanie" : "Obciążenie");
 
                     string catName = t.Kategoria?.Name.ToString().Trim() ?? "";
                     if (string.IsNullOrWhiteSpace(catName))
@@ -148,21 +131,17 @@ namespace Test
                         Log($"Brak kategorii dla transakcji: {t.DataTransakcji} | {t.Odbiorca}");
                         continue;
                     }
-                    //********************************************************************************************/\
-                  
+
                     bool written = false;
 
-                    // PRZYCHODY i KOSZTY STAŁE -> wpis obok nazwy kategorii (po prawej stronie scalonego zakresu)
-                    if (IncomeCategories.Any(x => string.Equals(x, catName, StringComparison.OrdinalIgnoreCase)) ||
-                        FixedExpenseCategories.Any(x => string.Equals(x, catName, StringComparison.OrdinalIgnoreCase)))
+                    if (IncomeCategories.Contains(catName) || FixedExpenseCategories.Contains(catName))
                     {
                         var catInfo = FindCategoryCell(ws, catName);
                         if (catInfo.found)
                         {
-                            int targetCol = catInfo.endCol + 1; // komórka po prawej stronie scalonego zakresu
+                            int targetCol = catInfo.endCol + 1;
                             int row = catInfo.row;
 
-                            // zabezpieczenie: jeśli target kolumna leży w protected range - pomijamy
                             if (IsInProtectedRanges(row, targetCol))
                             {
                                 Log($"Pominięto (protected autosum) komórkę obok kategorii {catName} (r{row}c{targetCol}).");
@@ -170,7 +149,25 @@ namespace Test
                             else
                             {
                                 var targetCell = ws.Cells[row, targetCol];
+                                bool added = TransactionJournal.AddEntry(new TransactionLogEntry
+                                {
+                                    Date = dt,
+                                    Category = catName,
+                                    Amount = amount,
+                                    Recipient = t.Odbiorca,
+                                    Sheet = sheetName
+                                });
+
+                                if (!added)
+                                {
+                                    Log($"Pominięto duplikat: {catName} | {amount} | {t.Odbiorca}");
+                                    continue;
+                                }
+
                                 AppendAmountToCellFormula(targetCell, amount);
+                                targetCell.Style.Numberformat.Format = "0.00";
+                                targetCell.Style.Font.Color.SetColor(System.Drawing.Color.Black);
+
                                 Log($"Wpisano (stałe/przychód): {catName} -> {targetCell.Address} := {targetCell.Formula ?? targetCell.Value?.ToString()}");
                                 written = true;
                             }
@@ -180,14 +177,13 @@ namespace Test
                             Log($"Nie znaleziono kategorii (stałe/przychód): {catName}");
                         }
                     }
-                    // WYDATKI ZMIENNE -> w kolumnach dni (D..AH)
                     else if (tipo == "Obciążenie")
                     {
                         var catInfo = FindCategoryCell(ws, catName);
                         if (catInfo.found)
                         {
                             int row = catInfo.row;
-                            int targetCol = 3 + dt.Day; // D=4 dla day=1
+                            int targetCol = 3 + dt.Day;
                             if (IsInProtectedRanges(row, targetCol))
                             {
                                 Log($"Pominięto (protected autosum) komórkę dnia dla {catName} (r{row}c{targetCol}).");
@@ -195,22 +191,26 @@ namespace Test
                             else
                             {
                                 var dayCell = ws.Cells[row, targetCol];
+                                bool added = TransactionJournal.AddEntry(new TransactionLogEntry
+                                {
+                                    Date = dt,
+                                    Category = catName,
+                                    Amount = amount,
+                                    Recipient = t.Odbiorca,
+                                    Sheet = sheetName
+                                });
+
+                                if (!added)
+                                {
+                                    Log($"Pominięto duplikat: {catName} | {amount} | {t.Odbiorca}");
+                                    continue;
+                                }
                                 AppendAmountToCellFormula(dayCell, amount);
+                                dayCell.Style.Numberformat.Format = "0.00";
+                                dayCell.Style.Font.Color.SetColor(System.Drawing.Color.Black);
+
                                 Log($"Wpisano (zmienne): {catName} -> {dayCell.Address} := {dayCell.Formula ?? dayCell.Value?.ToString()}");
                                 written = true;
-
-                                // opcjonalnie: jeśli kolumna C (sum) nie ma formuły, zaktualizuj sumę liczbowo
-                                var sumCell = ws.Cells[row, 3];
-                                if (string.IsNullOrWhiteSpace(sumCell.Formula))
-                                {
-                                    double s = 0;
-                                    for (int c = 4; c <= 34; c++)
-                                    {
-                                        if (double.TryParse(ws.Cells[row, c].Text, NumberStyles.Any, CultureInfo.InvariantCulture, out double v))
-                                            s += v;
-                                    }
-                                    sumCell.Value = s;
-                                }
                             }
                         }
                         else
@@ -218,6 +218,7 @@ namespace Test
                             Log($"Nie znaleziono kategorii (zmienne): {catName}");
                         }
                     }
+
                     else
                     {
                         Log($"Pominięto transakcję (niepasuje do żadnej sekcji): {catName} | {t.DataTransakcji}");
@@ -234,6 +235,10 @@ namespace Test
                 }
             } // foreach
 
+            package.Workbook.CalcMode = ExcelCalcMode.Automatic;
+            package.Workbook.FullCalcOnLoad = true;
+            package.Workbook.Calculate();
+
             package.Save();
             Log("Zapisano plik budżetu.");
         }
@@ -242,26 +247,57 @@ namespace Test
         // jeśli komórka ma liczbę -> "=existing+amount", jeśli ma formułę -> "existingFormula + +amount"
         private void AppendAmountToCellFormula(ExcelRange cell, double amount)
         {
-            var curFormula = cell.Formula?.Trim();
-            var curText = cell.Text?.Trim();
+            if (cell == null) return;
 
-            if (!string.IsNullOrWhiteSpace(curFormula))
+            // normalizacja reprezentacji of amount
+            string amountToken = amount.ToString("0.##", CultureInfo.InvariantCulture);
+
+            // 1) sprawdź czy komórka ma formułę
+            var formula = cell.Formula?.Trim();
+            if (!string.IsNullOrWhiteSpace(formula))
             {
-                // istniejąca formuła (np. "=10+20") -> dopisz +amount
-                if (!curFormula.StartsWith("=")) curFormula = "=" + curFormula;
-                cell.Formula = curFormula + "+" + amount.ToString(CultureInfo.InvariantCulture);
+                // upewnij się że zaczyna się od "="
+                if (!formula.StartsWith("=")) formula = "=" + formula;
+
+                // czy token amount już jest w formule? (sprawdzamy po separatorze '+' i '-' z zachowaniem formatu)
+                var parts = formula.Substring(1) // bez '='
+                                  .Split(new[] { '+', '-' }, StringSplitOptions.RemoveEmptyEntries)
+                                  .Select(p => p.Trim())
+                                  .ToList();
+
+                // porównuj wartości numerycznie by unikać problemów z formatowaniem
+                bool exists = parts.Any(p =>
+                {
+                    // usuń potencjalne nawiasy/spacje
+                    string cleaned = p.Replace("(", "").Replace(")", "").Trim();
+                    return double.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out double v) &&
+                           Math.Abs(v - amount) < 0.005;
+                });
+
+                if (exists) return; // już jest ta kwota — nic nie robimy
+
+                // dopisz +amount
+                cell.Formula = formula + "+" + amountToken;
+                return;
             }
-            else if (!string.IsNullOrWhiteSpace(curText) && double.TryParse(curText, NumberStyles.Any, CultureInfo.InvariantCulture, out double existing))
+
+            // 2) jeśli brak formuły, sprawdź czy jest liczba tekstowa
+            string text = cell.Text?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(text) && double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out double existingValue))
             {
-                // istnieje liczba -> przekształć do formuły
-                cell.Formula = $"={existing.ToString(CultureInfo.InvariantCulture)}+{amount.ToString(CultureInfo.InvariantCulture)}";
+                // jeżeli liczba równa amount - pomijamy (unikamy duplikatu)
+                if (Math.Abs(existingValue - amount) < 0.005) return;
+
+                // zamień na formułę =existing+amount (używamy invariant dla zapisu)
+                string eToken = existingValue.ToString("0.##", CultureInfo.InvariantCulture);
+                cell.Formula = $"={eToken}+{amountToken}";
+                return;
             }
-            else
-            {
-                // pusta -> ustaw formułę
-                cell.Formula = $"={amount.ToString(CultureInfo.InvariantCulture)}";
-            }
+
+            // 3) pusta komórka -> wpisz formułę =amount
+            cell.Formula = "=" + amountToken;
         }
+
 
         // Szuka kategorii w arkuszu, obsługuje scalone komórki.
         // Zwraca tuple: (found,row,startCol,endCol)
