@@ -1,5 +1,6 @@
 ﻿using OfficeOpenXml;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Test
 {
@@ -94,6 +95,7 @@ namespace Test
             }
 
             using var package = new ExcelPackage(new FileInfo(_budgetPath));
+            ValidateRecentTransactions(package);
 
             foreach (var t in transactions)
             {
@@ -149,7 +151,7 @@ namespace Test
                             else
                             {
                                 var targetCell = ws.Cells[row, targetCol];
-                                bool added = TransactionJournal.AddEntry(new TransactionLogEntry
+                                bool added = TransactionLogger.AddEntry(new TransactionLogEntry
                                 {
                                     Date = dt,
                                     Category = catName,
@@ -191,7 +193,7 @@ namespace Test
                             else
                             {
                                 var dayCell = ws.Cells[row, targetCol];
-                                bool added = TransactionJournal.AddEntry(new TransactionLogEntry
+                                bool added = TransactionLogger.AddEntry(new TransactionLogEntry
                                 {
                                     Date = dt,
                                     Category = catName,
@@ -248,7 +250,7 @@ namespace Test
         // - jeśli komórka ma liczbę -> "=existing+amount"
         // - jeśli ma formułę -> "existingFormula + +amount"
         // UWAGA: usunięto detekcję "czy ta sama liczba już jest w formule" — 
-        // deduplikację pozostawiamy w TransactionJournal.
+        // deduplikację pozostawiamy w TransactionLogger.
         private void AppendAmountToCellFormula(ExcelRange cell, double amount)
         {
             if (cell == null) return;
@@ -368,5 +370,79 @@ namespace Test
             }
             catch { /* ignore logging errors */ }
         }
+
+        private void ValidateRecentTransactions(ExcelPackage package)
+        {
+            var recentEntries = TransactionLogger.GetEntriesFromLastDays(10);
+            if (recentEntries.Count == 0)
+            {
+                Log("Brak transakcji do walidacji (ostatnie 10 dni).");
+                return;
+            }
+
+            Log($"Rozpoczynam walidację ostatnich {recentEntries.Count} transakcji z 10 dni...");
+
+            foreach (var entry in recentEntries)
+            {
+                try
+                {
+                    var ws = package.Workbook.Worksheets
+                        .FirstOrDefault(s => string.Equals(s.Name, entry.Sheet, StringComparison.OrdinalIgnoreCase));
+                    if (ws == null)
+                    {
+                        Log($"Walidacja: brak arkusza '{entry.Sheet}' dla transakcji {entry.Category}");
+                        continue;
+                    }
+
+                    // znajdź kategorię
+                    var catInfo = FindCategoryCell(ws, entry.Category);
+                    if (!catInfo.found)
+                    {
+                        Log($"Walidacja: nie znaleziono kategorii {entry.Category} w arkuszu {entry.Sheet}");
+                        continue;
+                    }
+
+                    // ustal kolumnę docelową (stałe/przychody lub dzienne)
+                    int targetCol = IncomeCategories.Contains(entry.Category) || FixedExpenseCategories.Contains(entry.Category)
+                        ? catInfo.endCol + 1
+                        : 3 + entry.Date.Day;
+                    int row = catInfo.row;
+
+                    var cell = ws.Cells[row, targetCol];
+                    string formula = cell.Formula?.Trim() ?? cell.Text?.Trim() ?? "";
+
+                    // jeśli pusta komórka – dodaj natychmiast
+                    if (string.IsNullOrEmpty(formula))
+                    {
+                        AppendAmountToCellFormula(cell, entry.Amount);
+                        Log($"Walidacja: brak danych — dodano {entry.Amount:0.00} do {cell.Address}");
+                        continue;
+                    }
+
+                    // policz wystąpienia tej kwoty w formule
+                    var matches = Regex.Matches(formula, $@"(?<!\d){entry.Amount.ToString("0.##", CultureInfo.InvariantCulture)}(?!\d)");
+                    int count = matches.Count;
+
+                    // ile razy ta transakcja powinna wystąpić w arkuszu
+                    int expectedCount = TransactionLogger.CountEntries(entry.Category, entry.Date, entry.Amount);
+
+                    if (count < expectedCount)
+                    {
+                        int missing = expectedCount - count;
+                        for (int i = 0; i < missing; i++)
+                            AppendAmountToCellFormula(cell, entry.Amount);
+
+                        Log($"Walidacja: uzupełniono {missing} brakujące wystąpienie {entry.Amount:0.00} w {cell.Address}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"Błąd walidacji transakcji {entry.Category} | {entry.Amount}: {ex.Message}");
+                }
+            }
+
+            Log("Walidacja zakończona.");
+        }
+
     }
 }
