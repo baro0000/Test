@@ -243,52 +243,34 @@ namespace Test
             Log("Zapisano plik budżetu.");
         }
 
-        // DOPISUJE kwotę do komórki w postaci formuły: jeśli komórka pusta -> "=amount"
-        // jeśli komórka ma liczbę -> "=existing+amount", jeśli ma formułę -> "existingFormula + +amount"
+        // DOPISUJE kwotę do komórki w postaci formuły: 
+        // - jeśli komórka pusta -> "=amount"
+        // - jeśli komórka ma liczbę -> "=existing+amount"
+        // - jeśli ma formułę -> "existingFormula + +amount"
+        // UWAGA: usunięto detekcję "czy ta sama liczba już jest w formule" — 
+        // deduplikację pozostawiamy w TransactionJournal.
         private void AppendAmountToCellFormula(ExcelRange cell, double amount)
         {
             if (cell == null) return;
 
-            // normalizacja reprezentacji of amount
+            // normalizacja reprezentacji amount (Invariant -> kropka jako separator)
             string amountToken = amount.ToString("0.##", CultureInfo.InvariantCulture);
 
-            // 1) sprawdź czy komórka ma formułę
+            // 1) jeśli komórka ma formułę - po prostu dopisz +amount
             var formula = cell.Formula?.Trim();
             if (!string.IsNullOrWhiteSpace(formula))
             {
-                // upewnij się że zaczyna się od "="
+                // upewnij się, że formuła zaczyna się od "="
                 if (!formula.StartsWith("=")) formula = "=" + formula;
-
-                // czy token amount już jest w formule? (sprawdzamy po separatorze '+' i '-' z zachowaniem formatu)
-                var parts = formula.Substring(1) // bez '='
-                                  .Split(new[] { '+', '-' }, StringSplitOptions.RemoveEmptyEntries)
-                                  .Select(p => p.Trim())
-                                  .ToList();
-
-                // porównuj wartości numerycznie by unikać problemów z formatowaniem
-                bool exists = parts.Any(p =>
-                {
-                    // usuń potencjalne nawiasy/spacje
-                    string cleaned = p.Replace("(", "").Replace(")", "").Trim();
-                    return double.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out double v) &&
-                           Math.Abs(v - amount) < 0.005;
-                });
-
-                if (exists) return; // już jest ta kwota — nic nie robimy
-
-                // dopisz +amount
                 cell.Formula = formula + "+" + amountToken;
                 return;
             }
 
-            // 2) jeśli brak formuły, sprawdź czy jest liczba tekstowa
+            // 2) jeśli brak formuły, sprawdź czy jest liczba (tekstowa)
             string text = cell.Text?.Trim() ?? "";
-            if (!string.IsNullOrEmpty(text) && double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out double existingValue))
+            if (!string.IsNullOrEmpty(text) && double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double existingValue))
             {
-                // jeżeli liczba równa amount - pomijamy (unikamy duplikatu)
-                if (Math.Abs(existingValue - amount) < 0.005) return;
-
-                // zamień na formułę =existing+amount (używamy invariant dla zapisu)
+                // Jeśli istnieje liczba -> przekształć do formuły =existing+amount
                 string eToken = existingValue.ToString("0.##", CultureInfo.InvariantCulture);
                 cell.Formula = $"={eToken}+{amountToken}";
                 return;
@@ -297,6 +279,7 @@ namespace Test
             // 3) pusta komórka -> wpisz formułę =amount
             cell.Formula = "=" + amountToken;
         }
+
 
 
         // Szuka kategorii w arkuszu, obsługuje scalone komórki.
