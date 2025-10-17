@@ -1,146 +1,177 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="pl">
 <head>
-    <meta charset="utf-8" />
-    <title>BudzetDomowy</title>
-    <link rel="stylesheet" href="css/style.css" />
+    <meta charset="UTF-8" />
+    <title>BudżetDomowy – klasyfikacja</title>
     <style>
         body {
             background-color: #1e1e2f;
             color: #e6e6f0;
             font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 20px;
         }
 
-        h1 {
-            color: #fff;
+        h2 {
+            color: #00aaff;
         }
-
-        button {
-            background-color: #2f2f45;
-            color: #fff;
-            border: 1px solid #444;
-            border-radius: 8px;
-            padding: 8px 14px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-            button:hover {
-                background-color: #40405c;
-            }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            color: #ccc;
+            margin-top: 10px;
         }
 
-        th, td {
+        td, th {
             border-bottom: 1px solid #333;
-            padding: 6px 10px;
-            text-align: left;
+            padding: 6px 8px;
+            vertical-align: top;
         }
 
-        .logbox {
-            background: #11111a;
-            height: 180px;
-            overflow-y: auto;
+        select, input[type="text"] {
+            background-color: #2b2b3c;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 4px;
+            border-radius: 4px;
+        }
+
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background-color: #0088ff;
+            }
+
+        .log {
+            white-space: pre-wrap;
+            background-color: #11111a;
             padding: 8px;
             border-radius: 6px;
-        }
-
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 999;
-        }
-
-        .modal-content {
-            background: #2a2a3a;
-            padding: 20px;
-            border-radius: 12px;
-            width: 700px;
-            max-height: 85%;
+            height: 180px;
             overflow-y: auto;
+            margin-top: 10px;
+            border: 1px solid #333;
         }
 
-        .classify-card {
-            margin-bottom: 20px;
-            padding: 10px 14px;
-            border: 1px solid #444;
-            border-radius: 8px;
-            background: #1c1c2a;
-        }
-
-        .tx-line {
-            margin-bottom: 4px;
-        }
-
-        .plus {
-            color: #5fdf5f;
-        }
-
-        .minus {
-            color: #df5f5f;
-        }
-
-        select, input[type=text] {
-            background: #2c2c3c;
-            color: #fff;
-            border: 1px solid #555;
-            border-radius: 6px;
-            padding: 4px 6px;
+        .small {
+            font-size: 12px;
+            color: #aaa;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header><h1>BudzetDomowy</h1></header>
-
-        <div class="controls">
-            <button onclick="chooseCsv()">Wybierz plik CSV</button>
-            <button onclick="chooseExcel()">Wybierz plik Excel</button>
-            <button onclick="loadTransactions()">Wczytaj transakcje</button>
-            <button onclick="updateBudget()">Aktualizuj budzet</button>
-            <button onclick="getLog()">Pobierz log</button>
-        </div>
-
-        <section class="panels">
-            <div class="panel">
-                <h3>Log</h3>
-                <pre id="log" class="logbox"></pre>
-            </div>
-            <div class="panel">
-                <h3>Transakcje</h3>
-                <table id="txTable">
-                    <thead><tr><th>Data</th><th>Odbiorca</th><th>Opis</th><th>Kwota</th><th>Kategoria</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-        </section>
+    <h2>BudżetDomowy – klasyfikacja transakcji</h2>
+    <div id="app">
+        <p>Oczekiwanie na dane...</p>
     </div>
 
-    <!-- Modal -->
-    <div id="classifyModal" class="modal" style="display:none;">
-        <div class="modal-content">
-            <h3>Przypisz kategorie</h3>
-            <form id="classifyForm">
-                <div id="classifyRows"></div>
-                <div style="margin-top:10px; text-align:right;">
-                    <button type="button" onclick="submitClassification()">Zatwierdz</button>
-                    <button type="button" onclick="closeClassify()">Anuluj</button>
-                </div>
-            </form>
-        </div>
-    </div>
+    <script>
+        const app = document.getElementById("app");
 
-    <script src="js/app.js"></script>
+        window.chrome.webview.addEventListener("message", event => {
+            const data = event.data;
+            if (!data) return;
+
+            if (data.cmd === "classify") {
+                showClassification(data.items);
+            }
+            else if (data.cmd === "transactionsLoaded") {
+                showTransactions(data.items);
+            }
+            else if (data.cmd === "log") {
+                showLog(data.text);
+            }
+        });
+
+        function showClassification(items) {
+            if (!items || items.length === 0) {
+                app.innerHTML = "<p>Brak transakcji do klasyfikacji.</p>";
+                return;
+            }
+
+            let html = `<table>
+                    <tr>
+                        <th>Data</th>
+                        <th>Odbiorca</th>
+                        <th>Opis</th>
+                        <th>Kwota</th>
+                        <th>Kategoria</th>
+                        <th>Słowo kluczowe</th>
+                        <th>Zastosuj do wszystkich?</th>
+                    </tr>`;
+
+            for (const item of items) {
+                // 🔹 używamy teraz item.availableCategories z backendu
+                const options = (item.availableCategories || [])
+                    .map(cat => `<option value="${cat}">${cat}</option>`)
+                    .join("");
+
+                html += `
+                        <tr>
+                            <td>${item.date}</td>
+                            <td>${item.recipient || ""}</td>
+                            <td>${item.opis || ""}</td>
+                            <td>${item.kwota}</td>
+                            <td>
+                                <select id="cat_${item.idx}">
+                                    <option value="">-- wybierz --</option>
+                                    ${options}
+                                </select>
+                            </td>
+                            <td><input id="kw_${item.idx}" type="text" placeholder="np. fragment opisu"></td>
+                            <td><input id="apply_${item.idx}" type="checkbox"></td>
+                        </tr>`;
+            }
+
+            html += `</table>
+                    <button onclick="sendClassification(${JSON.stringify(items.map(i => i.idx))})">Zapisz klasyfikację</button>`;
+
+            app.innerHTML = html;
+        }
+
+        function sendClassification(idxs) {
+            const mappings = [];
+            for (const idx of idxs) {
+                const cat = document.getElementById("cat_" + idx)?.value || "";
+                const keyword = document.getElementById("kw_" + idx)?.value || "";
+                const apply = document.getElementById("apply_" + idx)?.checked || false;
+                mappings.push({ idx: idx, category: cat, keyword: keyword, applyToAll: apply });
+            }
+
+            window.chrome.webview.postMessage({
+                cmd: "classifyResult",
+                mappings: mappings
+            });
+
+            app.innerHTML = `<p style="color:#0f0;">Dziękujemy! Klasyfikacja została zapisana.</p>`;
+        }
+
+        function showTransactions(items) {
+            let html = "<h3>Wczytane transakcje</h3><table>";
+            html += "<tr><th>Data</th><th>Odbiorca</th><th>Opis</th><th>Kwota</th><th>Kategoria</th></tr>";
+            for (const t of items) {
+                html += `<tr>
+                        <td>${t.date}</td>
+                        <td>${t.recipient || ""}</td>
+                        <td>${t.opis || ""}</td>
+                        <td>${t.kwota}</td>
+                        <td>${t.category}</td>
+                    </tr>`;
+            }
+            html += "</table>";
+            app.innerHTML = html;
+        }
+
+        function showLog(text) {
+            app.innerHTML = `<div class="log">${text}</div>`;
+        }
+    </script>
 </body>
 </html>

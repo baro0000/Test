@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Collections.Generic;
-using Test; // Twój projekt z klasami (Transaction, BudgetUpdater, CategoryMenager, itp.)
+using Test;
 
 namespace BudgetUpdater.DesktopApp
 {
@@ -16,15 +16,11 @@ namespace BudgetUpdater.DesktopApp
         private string? _csvPath;
         private string? _excelPath;
         private CoreWebView2? _core;
-        private readonly BudgetInterop _interop;
-
-        // Do komunikacji z webview przy oczekiwaniu na klasyfikację
         private TaskCompletionSource<JsonElement>? _classificationTcs;
 
         public MainWindow()
         {
             InitializeComponent();
-            _interop = new BudgetInterop(AppendLog, RefreshUiWithData);
             InitializeAsync();
         }
 
@@ -34,67 +30,60 @@ namespace BudgetUpdater.DesktopApp
             {
                 await WebView.EnsureCoreWebView2Async();
                 _core = WebView.CoreWebView2;
-                var folder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+
+                string folder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
                 _core.SetVirtualHostNameToFolderMapping("appassets", folder, CoreWebView2HostResourceAccessKind.Allow);
+
                 _core.NavigationCompleted += Core_NavigationCompleted;
                 _core.WebMessageReceived += Core_WebMessageReceived;
+
                 WebView.Source = new Uri("https://appassets/index.html");
+
+                AppendLog("Interfejs przeglądarkowy został uruchomiony.");
             }
             catch (Exception ex)
             {
-                AppendLog($"Błąd WebView2 init: {ex.Message}");
+                AppendLog($"Błąd inicjalizacji WebView2: {ex.Message}");
             }
         }
 
-        private void Core_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e) { }
+        private void Core_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            AppendLog("Załadowano interfejs użytkownika.");
+        }
 
         private void Core_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
             try
             {
-                var json = e.WebMessageAsJson;
-                var doc = JsonSerializer.Deserialize<JsonElement>(json);
+                var doc = JsonDocument.Parse(e.WebMessageAsJson).RootElement;
                 if (!doc.TryGetProperty("cmd", out var cmd)) return;
                 var command = cmd.GetString();
+
                 switch (command)
                 {
-                    case "chooseCsv":
-                        BtnChooseCsv_Click(null!, null!);
-                        break;
-                    case "chooseExcel":
-                        BtnChooseExcel_Click(null!, null!);
-                        break;
-                    case "loadTransactions":
-                        _ = HandleLoadTransactions();
-                        break;
-                    case "updateBudget":
-                        _ = HandleFullUpdate();
-                        break;
-                    case "getLog":
-                        SendLogToWeb();
-                        break;
+                    case "chooseCsv": BtnChooseCsv_Click(null!, null!); break;
+                    case "chooseExcel": BtnChooseExcel_Click(null!, null!); break;
+                    case "loadTransactions": _ = HandleLoadTransactions(); break;
+                    case "updateBudget": _ = HandleFullUpdate(); break;
+                    case "getLog": SendLogToWeb(); break;
                     case "classifyResult":
-                        // Odebrano wynik klasyfikacji z UI
-                        if (_classificationTcs != null)
-                        {
-                            _classificationTcs.TrySetResult(doc);
-                        }
+                        _classificationTcs?.TrySetResult(doc);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                AppendLog($"Error handling message: {ex.Message}");
+                AppendLog($"Błąd przetwarzania wiadomości: {ex.Message}");
             }
         }
 
         private void SendLogToWeb()
         {
+            if (_core == null) return;
             var json = JsonSerializer.Serialize(new { cmd = "log", text = LogBox.Text });
-            _core?.PostWebMessageAsJson(json);
+            _core.PostWebMessageAsJson(json);
         }
-
-        private void RefreshUiWithData(object? data) { /* opcjonalnie push do webview */ }
 
         private void AppendLog(string message)
         {
@@ -105,61 +94,81 @@ namespace BudgetUpdater.DesktopApp
             });
         }
 
-        // --- Flow centralny: wczytanie + klasyfikacja (bez aktualizacji) ---
+        // ==================== GŁÓWNA LOGIKA ====================
+
         private async Task HandleLoadTransactions()
         {
             if (string.IsNullOrWhiteSpace(_csvPath))
             {
-                AppendLog("Wybierz plik CSV najpierw.");
+                AppendLog("Najpierw wybierz plik CSV.");
                 return;
             }
 
             try
             {
-                // 1) Wczytaj transakcje z CSV
-                var loader = new Test.LoadDataFromFile();
+                var loader = new LoadDataFromFile();
                 var txs = loader.LoadData(_csvPath);
-                AppendLog($"Wczytano {txs.Count} transakcji z pliku.");
+                AppendLog($"Wczytano {txs.Count} transakcji.");
 
-                // 2) Stwórz menagera reguł i sprawdź automatyczne dopasowanie
-                var cm = new Test.CategoryMenager();
-                var unknowns = new List<(int idx, Transaction t)>();
+                var cm = new CategoryMenager();
+                var unknowns = new List<int>();
+
                 for (int i = 0; i < txs.Count; i++)
                 {
                     var t = txs[i];
                     var cat = cm.GetCategoryForTransaction(t);
                     if (cat != null)
-                    {
                         t.Kategoria = cat;
-                    }
                     else
-                    {
-                        unknowns.Add((i, t));
-                    }
+                        unknowns.Add(i);
                 }
 
-                // 3) Jeśli są nieznane transakcje - poproś UI o ręczną klasyfikację
                 if (unknowns.Count > 0)
                 {
-                    AppendLog($"Znaleziono {unknowns.Count} nieznanych transakcji, wymagających klasyfikacji manualnej.");
-                    var categories = Enum.GetNames(typeof(CategoryName)).ToArray(); // przekaz listę dostępnych kategorii
-                    var itemsForUi = unknowns.Select(u => new {
-                        idx = u.idx,
-                        date = u.t.DataTransakcji,
-                        recipient = u.t.Odbiorca,
-                        opis = u.t.Opis,
-                        kwota = u.t.Kwota
-                    }).ToList();
+                    AppendLog($"Znaleziono {unknowns.Count} nieznanych transakcji — wymagana klasyfikacja ręczna.");
 
-                    var payload = JsonSerializer.Serialize(new { cmd = "classify", items = itemsForUi, categories });
+                    // 🔹 Kategorie przychodów i kosztów
+                    var incomeCategories = new[] { "Bartek", "Gosia", "Inne" };
+                    var expenseCategories = new[]
+                    {
+                        "Czynsz",
+                        "Gaz",
+                        "Prąd",
+                        "Woda",
+                        "Play",
+                        "Przedszkole",
+                        "Koń",
+                        "Ubezp_Gosia",
+                        "Rata",
+                        "Telefon",
+                        "Abonamenty_inne",
+                        "Inne_wydatki"
+                    };
+
+                    // 🔹 Przygotowanie danych dla UI (każda transakcja wie, które kategorie ma wyświetlić)
+                    var itemsForUi = unknowns.Select(i => new
+                    {
+                        idx = i,
+                        date = txs[i].DataTransakcji,
+                        recipient = txs[i].Odbiorca,
+                        opis = txs[i].Opis,
+                        kwota = txs[i].Kwota,
+                        availableCategories = txs[i].Kwota >= 0 ? incomeCategories : expenseCategories
+                    }).ToArray();
+
+                    var payload = JsonSerializer.Serialize(new
+                    {
+                        cmd = "classify",
+                        items = itemsForUi
+                    });
+
                     _core?.PostWebMessageAsJson(payload);
 
-                    // 3a) teraz poczekaj asynchronicznie na odpowiedź z UI (classifyResult)
+                    // 🔹 Czekaj na klasyfikację użytkownika
                     _classificationTcs = new TaskCompletionSource<JsonElement>();
-                    var resultDoc = await _classificationTcs.Task; // czekamy na wynik przesłany przez JS
+                    var result = await _classificationTcs.Task;
 
-                    // resultDoc powinien zawierać property "mappings" - tablica { idx, category, applyToAll, keyword }
-                    if (resultDoc.TryGetProperty("mappings", out var mappings))
+                    if (result.TryGetProperty("mappings", out var mappings))
                     {
                         foreach (var m in mappings.EnumerateArray())
                         {
@@ -171,51 +180,44 @@ namespace BudgetUpdater.DesktopApp
                             if (idx < 0 || idx >= txs.Count) continue;
                             var tx = txs[idx];
 
-                            // zbuduj obiekt Category zgodnie z Twoją klasą Category
-                            // Tutaj zakładamy enum CategoryName i klasę Category { public CategoryName Name; public string Type; }
                             if (Enum.TryParse(typeof(CategoryName), selectedCategory, true, out var enumVal))
                             {
-                                var cat = new Category();
-                                cat.Name = (CategoryName)enumVal;
-                                // ustaw typ na podstawie kwoty
-                                cat.Type = tx.Kwota >= 0 ? "Uznanie" : "Obciążenie";
+                                var cat = new Category
+                                {
+                                    Name = (CategoryName)enumVal,
+                                    Type = tx.Kwota >= 0 ? "Uznanie" : "Obciążenie"
+                                };
 
-                                // jeśli applyToAll -> zapisz regułę w menagerze
+                                tx.Kategoria = cat;
+
                                 if (applyToAll)
                                 {
-                                    string key = string.IsNullOrWhiteSpace(keyword) ? (tx.Odbiorca ?? tx.Opis ?? "") : keyword;
-                                    cm.AddRule(key.ToLowerInvariant(), cat, true);
-                                    AppendLog($"Zapisano regułę: '{key}' -> {cat.Name}");
-                                }
+                                    string key = string.IsNullOrWhiteSpace(keyword)
+                                        ? (tx.Odbiorca ?? tx.Opis ?? "")
+                                        : keyword;
 
-                                // przypisz kategorię do transakcji
-                                tx.Kategoria = cat;
+                                    cm.AddRule(key.ToLowerInvariant(), cat, true);
+                                    AppendLog($"Zapisano regułę: '{key}' → {cat.Name}");
+                                }
                             }
-                            else
-                            {
-                                AppendLog($"Niepoprawna nazwa kategorii: {selectedCategory}");
-                            }
-                        } // foreach mapping
-                    } // if mappings
-                    else
-                    {
-                        AppendLog("Brak mapowań w odpowiedzi klasyfikacji.");
+                        }
                     }
 
                     _classificationTcs = null;
                 }
 
-                // Na koniec wyślij do webview listę transakcji już z kategoriami (do przeglądu)
-                var items = txs.Select(t => new {
+                // 🔹 Wyślij gotowe dane do przeglądarki
+                var items = txs.Select(t => new
+                {
                     date = t.DataTransakcji,
                     recipient = t.Odbiorca,
                     opis = t.Opis,
                     kwota = t.Kwota,
                     category = t.Kategoria?.Name.ToString() ?? ""
                 }).ToList();
+
                 var payload2 = JsonSerializer.Serialize(new { cmd = "transactionsLoaded", items });
                 _core?.PostWebMessageAsJson(payload2);
-
             }
             catch (Exception ex)
             {
@@ -223,59 +225,52 @@ namespace BudgetUpdater.DesktopApp
             }
         }
 
-        // --- Pełne uruchomienie aktualizacji (sprawdź reguły, journal, i aktualizuj excel) ---
         private async Task HandleFullUpdate()
         {
             if (string.IsNullOrWhiteSpace(_excelPath))
             {
-                AppendLog("Wybierz plik budżetu Excel najpierw.");
+                AppendLog("Wybierz plik budżetu Excel.");
                 return;
             }
-
             if (string.IsNullOrWhiteSpace(_csvPath))
             {
-                AppendLog("Wybierz plik CSV najpierw.");
+                AppendLog("Wybierz plik CSV.");
                 return;
             }
 
             try
             {
-                // Wczytaj i zaklasyfikuj (wywołaj tę samą logikę, ale bez blokującego UI)
                 await HandleLoadTransactions();
 
-                // Wczytaj transakcje ponownie, teraz już z kategoriami ustawionymi
-                var loader = new Test.LoadDataFromFile();
-                var transactions = loader.LoadData(_csvPath);
+                var loader = new LoadDataFromFile();
+                var txs = loader.LoadData(_csvPath);
 
-                // Jeżeli nadal występują transakcje bez kategorii, przerwij i powiadom
-                var missing = transactions.Where(t => t.Kategoria == null).ToList();
+                var missing = txs.Where(t => t.Kategoria == null).ToList();
                 if (missing.Any())
                 {
-                    AppendLog($"Są nadal niezaklasyfikowane transakcje ({missing.Count}). Proszę je zaklasyfikować przed aktualizacją.");
-
+                    AppendLog($"Pozostały niezaklasyfikowane transakcje ({missing.Count}).");
                     return;
                 }
 
-                // Uruchom aktualizację budżetu (w wątku tła)
                 var updater = new Test.BudgetUpdater(_excelPath);
-                AppendLog("Rozpoczynam aktualizację budżetu (to może chwilę potrwać)...");
-                await Task.Run(() => updater.UpdateBudget(transactions));
-                AppendLog("Aktualizacja zakończona.");
+                AppendLog("Aktualizuję budżet...");
+                await Task.Run(() => updater.UpdateBudget(txs));
+                AppendLog("Aktualizacja zakończona pomyślnie.");
             }
             catch (Exception ex)
             {
-                AppendLog($"Błąd aktualizacji budżetu: {ex.Message}");
+                AppendLog($"Błąd aktualizacji: {ex.Message}");
             }
         }
 
-        // --- przyciski UI ---
+        // ==================== GUI ====================
+
         private void BtnChooseCsv_Click(object sender, RoutedEventArgs e)
         {
-            var ofd = new OpenFileDialog();
-            ofd.Filter = "CSV Files|*.csv|All files|*.*";
-            if (ofd.ShowDialog() == true)
+            var dlg = new OpenFileDialog { Filter = "CSV Files|*.csv|All files|*.*" };
+            if (dlg.ShowDialog() == true)
             {
-                _csvPath = ofd.FileName;
+                _csvPath = dlg.FileName;
                 TxtCsvPath.Text = _csvPath;
                 AppendLog($"Wybrano CSV: {_csvPath}");
             }
@@ -283,24 +278,16 @@ namespace BudgetUpdater.DesktopApp
 
         private void BtnChooseExcel_Click(object sender, RoutedEventArgs e)
         {
-            var ofd = new OpenFileDialog();
-            ofd.Filter = "Excel Files|*.xlsx;*.xlsm;*.xls|All files|*.*";
-            if (ofd.ShowDialog() == true)
+            var dlg = new OpenFileDialog { Filter = "Excel Files|*.xlsx;*.xlsm;*.xls|All files|*.*" };
+            if (dlg.ShowDialog() == true)
             {
-                _excelPath = ofd.FileName;
+                _excelPath = dlg.FileName;
                 TxtExcelPath.Text = _excelPath;
                 AppendLog($"Wybrano plik budżetu: {_excelPath}");
             }
         }
 
-        private void BtnLoad_Click(object sender, RoutedEventArgs e)
-        {
-            _ = HandleLoadTransactions();
-        }
-
-        private void BtnUpdate_Click(object sender, RoutedEventArgs e)
-        {
-            _ = HandleFullUpdate();
-        }
+        private void BtnLoad_Click(object sender, RoutedEventArgs e) => _ = HandleLoadTransactions();
+        private void BtnUpdate_Click(object sender, RoutedEventArgs e) => _ = HandleFullUpdate();
     }
 }
